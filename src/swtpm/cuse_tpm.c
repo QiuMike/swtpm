@@ -78,6 +78,9 @@
 /* maximum size of request buffer */
 #define TPM_REQ_MAX 4096
 
+/* version of the TPM (1.2 or 2) */
+static TPMLIB_TPMVersion tpmversion;
+
 /* buffer containing the TPM request */
 static unsigned char *ptm_request;
 
@@ -200,7 +203,7 @@ static const char *usage =
 "                       instead\n"
 "-r|--runas <user>   :  after creating the CUSE device, change to the given\n"
 "                       user\n"
-""
+"--tpm2              :  choose TPM2 functionality\n"
 "-h|--help           :  display this help screen and terminate\n"
 "\n";
 
@@ -208,6 +211,12 @@ const static unsigned char TPM_ResetEstablishmentBit[] = {
     0x00, 0xC1,                     /* TPM Request */
     0x00, 0x00, 0x00, 0x0A,         /* length (10) */
     0x40, 0x00, 0x00, 0x0B          /* TPM_ORD_ResetEstablishmentBit */
+};
+
+const static unsigned char TPM2_Resp_FatalError[] = {
+    0x80, 0x01,                     /* TPM Response */
+    0x00, 0x00, 0x00, 0x0A,         /* length (10) */
+    0x00, 0x00, 0x01, 0x01          /* TPM_FAIL */
 };
 
 static TPM_RESULT
@@ -424,7 +433,7 @@ static TPM_RESULT _TPM_IO_TpmEstablished_Reset(fuse_req_t req,
  *
  * @flags: libtpms init flags
  */
-static int tpm_start(uint32_t flags)
+static int tpm_start(uint32_t flags, TPMLIB_TPMVersion l_tpmversion)
 {
     DIR *dir;
     const char *tpmdir = tpmstate_get_dir();
@@ -460,7 +469,7 @@ static int tpm_start(uint32_t flags)
         goto error_del_pool;
     }
 
-    if (tpmlib_start(&cbs, flags) != TPM_SUCCESS)
+    if (tpmlib_start(&cbs, flags, l_tpmversion) != TPM_SUCCESS)
         goto error_del_pool;
 
     logprintf(STDOUT_FILENO,
@@ -480,11 +489,12 @@ error_del_pool:
  *
  * Write a fatal error response into the global ptm_response buffer.
  */
-static void ptm_write_fatal_error_response(void)
+static void ptm_write_fatal_error_response(TPMLIB_TPMVersion l_tpmversion)
 {
     tpmlib_write_fatal_error_response(&ptm_response,
                                       &ptm_res_len,
-                                      &ptm_res_tot);
+                                      &ptm_res_tot,
+                                      l_tpmversion);
 }
 
 /************************************ read() support ***************************/
@@ -807,8 +817,10 @@ static void ptm_write_stateblob(fuse_req_t req, const char *buf, size_t size)
  * req: fuse_req_t
  * buf: the buffer containing the TPM command
  * size: the size of the buffer
+ * tpmversion: the version of the TPM
  */
-static void ptm_write_cmd(fuse_req_t req, const char *buf, size_t size)
+static void ptm_write_cmd(fuse_req_t req, const char *buf, size_t size,
+                          TPMLIB_TPMVersion l_tpmversion)
 {
     ptm_req_len = size;
     ptm_res_len = 0;
@@ -826,7 +838,8 @@ static void ptm_write_cmd(fuse_req_t req, const char *buf, size_t size)
         if (ptm_req_len > TPM_REQ_MAX)
             ptm_req_len = TPM_REQ_MAX;
 
-        if (tpmlib_is_request_cancelable(ptm_request, ptm_req_len)) {
+        if (tpmlib_is_request_cancelable((const unsigned char*)buf,
+                                         ptm_req_len)) {
             /* have command processed by thread pool */
             memcpy(ptm_request, buf, ptm_req_len);
 
@@ -842,7 +855,7 @@ static void ptm_write_cmd(fuse_req_t req, const char *buf, size_t size)
         }
     } else {
         /* TPM not initialized; return error */
-        ptm_write_fatal_error_response();
+        ptm_write_fatal_error_response(l_tpmversion);
     }
 
     fuse_reply_write(req, ptm_req_len);
@@ -862,7 +875,7 @@ static void ptm_write(fuse_req_t req, const char *buf, size_t size,
 {
     switch (tx_state.state) {
     case TX_STATE_RW_COMMAND:
-        ptm_write_cmd(req, buf, size);
+        ptm_write_cmd(req, buf, size, tpmversion);
         break;
     case TX_STATE_GET_STATE_BLOB:
         fuse_reply_err(req, EIO);
@@ -944,17 +957,34 @@ static void ptm_ioctl(fuse_req_t req, int cmd, void *arg,
             fuse_reply_ioctl_retry(req, &iov, 1, NULL, 0);
         } else {
             ptm_cap ptm_caps;
-            ptm_caps = PTM_CAP_INIT | PTM_CAP_SHUTDOWN
-                | PTM_CAP_GET_TPMESTABLISHED
-                | PTM_CAP_SET_LOCALITY
-                | PTM_CAP_HASHING
-                | PTM_CAP_CANCEL_TPM_CMD
-                | PTM_CAP_STORE_VOLATILE
-                | PTM_CAP_RESET_TPMESTABLISHED
-                | PTM_CAP_GET_STATEBLOB
-                | PTM_CAP_SET_STATEBLOB
-                | PTM_CAP_STOP
-                | PTM_CAP_GET_CONFIG;
+            switch (tpmversion) {
+            case TPMLIB_TPM_VERSION_2:
+                ptm_caps = PTM_CAP_INIT | PTM_CAP_SHUTDOWN
+                    | PTM_CAP_GET_TPMESTABLISHED
+                    | PTM_CAP_SET_LOCALITY
+                    | PTM_CAP_HASHING
+                    //| PTM_CAP_CANCEL_TPM_CMD
+                    //| PTM_CAP_STORE_VOLATILE
+                    //| PTM_CAP_RESET_TPMESTABLISHED
+                    //| PTM_CAP_GET_STATEBLOB
+                    //| PTM_CAP_SET_STATEBLOB
+                    | PTM_CAP_STOP
+                    | PTM_CAP_GET_CONFIG;
+                break;
+            case TPMLIB_TPM_VERSION_1_2:
+                ptm_caps = PTM_CAP_INIT | PTM_CAP_SHUTDOWN
+                    | PTM_CAP_GET_TPMESTABLISHED
+                    | PTM_CAP_SET_LOCALITY
+                    | PTM_CAP_HASHING
+                    | PTM_CAP_CANCEL_TPM_CMD
+                    | PTM_CAP_STORE_VOLATILE
+                    | PTM_CAP_RESET_TPMESTABLISHED
+                    | PTM_CAP_GET_STATEBLOB
+                    | PTM_CAP_SET_STATEBLOB
+                    | PTM_CAP_STOP
+                    | PTM_CAP_GET_CONFIG;
+                break;
+            }
             fuse_reply_ioctl(req, 0, &ptm_caps, sizeof(ptm_caps));
         }
         break;
@@ -971,7 +1001,7 @@ static void ptm_ioctl(fuse_req_t req, int cmd, void *arg,
             TPMLIB_Terminate();
 
             tpm_running = false;
-            if (tpm_start(init_p->u.req.init_flags) < 0) {
+            if (tpm_start(init_p->u.req.init_flags, tpmversion) < 0) {
                 res = TPM_FAIL;
                 logprintf(STDERR_FILENO,
                           "Error: Could not initialize the TPM.\n");
@@ -1232,6 +1262,7 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
         {"migration-key" , required_argument, 0, 'K'},
         {"pid"           , required_argument, 0, 'p'},
         {"tpmstate"      , required_argument, 0, 's'},
+        {"tpm2"          ,       no_argument, 0, '2'},
         {"help"          ,       no_argument, 0, 'h'},
         {"version"       ,       no_argument, 0, 'v'},
         {NULL            , 0                , 0, 0  },
@@ -1250,6 +1281,8 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
     memset(&param, 0, sizeof(param));
 
     log_set_prefix("swtpm: ");
+
+    tpmversion = TPMLIB_TPM_VERSION_1_2;
 
     while (true) {
         opt = getopt_long(argc, argv, "M:m:n:r:hv", longopts, &longindex);
@@ -1316,6 +1349,9 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
         case 's': /* tpmstate */
             param.tpmstatedata = optarg;
             break;
+        case '2':
+            tpmversion = TPMLIB_TPM_VERSION_2;
+            break;
         case 'h': /* help */
             fprintf(stdout, usage, prgname, iface);
             return 0;
@@ -1328,6 +1364,8 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
             return 0;
         }
     }
+
+    SWTPM_NVRAM_Set_TPMVersion(tpmversion);
 
     if (!cinfo.dev_info_argv) {
         logprintf(STDERR_FILENO, "Error: device name missing\n");

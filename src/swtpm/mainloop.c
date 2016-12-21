@@ -181,7 +181,8 @@ int mainLoop(struct mainLoopParams *mlp,
             if (pollfds[CTRL_CLIENT_FD].revents & POLLIN) {
                 ctrlclntfd = ctrlchannel_process_fd(ctrlclntfd, callbacks,
                                                     &mainloop_terminate,
-                                                    &locality, &tpm_running);
+                                                    &locality, &tpm_running,
+                                                    mlp->tpmversion);
                 if (mainloop_terminate)
                     break;
             }
@@ -208,7 +209,8 @@ int mainLoop(struct mainLoopParams *mlp,
             if (rc == 0) {
                 if (!tpm_running) {
                     tpmlib_write_fatal_error_response(&rbuffer, &rlength,
-                                                      &rTotal);
+                                                      &rTotal,
+                                                      mlp->tpmversion);
                     goto skip_process;
                 }
             }

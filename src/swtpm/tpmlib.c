@@ -69,13 +69,20 @@ const char *tpmlib_get_blobname(uint32_t blobtype)
     }
 }
 
-TPM_RESULT tpmlib_start(struct libtpms_callbacks *cbs, uint32_t flags)
+TPM_RESULT tpmlib_start(struct libtpms_callbacks *cbs, uint32_t flags,
+                        TPMLIB_TPMVersion tpmversion)
 {
     TPM_RESULT res;
 
     if ((res = TPMLIB_RegisterCallbacks(cbs)) != TPM_SUCCESS) {
         logprintf(STDERR_FILENO,
                   "Error: Could not register the callbacks.\n");
+        return res;
+    }
+
+    if ((res = TPMLIB_ChooseTPMVersion(tpmversion)) != TPM_SUCCESS) {
+        logprintf(STDERR_FILENO,
+                  "Error: Could not choose TPM 2 implementation.\n");
         return res;
     }
 
@@ -164,10 +171,13 @@ TPM_RESULT tpmlib_TpmEstablished_Reset(TPM_MODIFIER_INDICATOR *g_locality,
 static void tpmlib_write_error_response(unsigned char **rbuffer,
                                         uint32_t *rlength,
                                         uint32_t *rTotal,
-                                        TPM_RESULT errcode)
+                                        TPM_RESULT errcode,
+                                        TPMLIB_TPMVersion tpmversion)
 {
     struct tpm_resp_header errresp = {
-        .tag = htobe16(0xc4),
+        .tag = (tpmversion == TPMLIB_TPM_VERSION_2)
+               ? htobe16(0x8001)
+               : htobe16(0xc4),
         .size = htobe32(sizeof(errresp)),
         .errcode = htobe32(errcode),
     };
@@ -188,7 +198,13 @@ static void tpmlib_write_error_response(unsigned char **rbuffer,
 
 void tpmlib_write_fatal_error_response(unsigned char **rbuffer,
                                        uint32_t *rlength,
-                                       uint32_t *rTotal)
+                                       uint32_t *rTotal,
+                                       TPMLIB_TPMVersion tpmversion)
 {
-    tpmlib_write_error_response(rbuffer, rlength, rTotal, TPM_FAIL);
+    TPM_RESULT errcode = (tpmversion == TPMLIB_TPM_VERSION_2)
+                         ? TPM_RC_FAILURE
+                         : TPM_FAIL;
+
+    tpmlib_write_error_response(rbuffer, rlength, rTotal, errcode,
+                                tpmversion);
 }
