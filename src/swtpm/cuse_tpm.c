@@ -67,6 +67,7 @@
 #include "common.h"
 #include "tpmstate.h"
 #include "pidfile.h"
+#include "locality.h"
 #include "logging.h"
 #include "tpm_ioctl.h"
 #include "swtpm_nvfile.h"
@@ -96,6 +97,9 @@ static TPM_MODIFIER_INDICATOR locality;
 /* whether the TPM is running (TPM_Init was received) */
 static bool tpm_running;
 
+/* flags on how to handle locality */
+static uint32_t locality_flags;
+
 #if GLIB_MAJOR_VERSION >= 2
 # if GLIB_MINOR_VERSION >= 32
 
@@ -121,6 +125,7 @@ struct cuse_param {
     char *migkeydata;
     char *piddata;
     char *tpmstatedata;
+    char *localitydata;
 };
 
 /* single message to send to the worker thread */
@@ -183,6 +188,10 @@ static const char *usage =
 "--key pwdfile=<path>[,mode=aes-cbc][,remove=[true|false]]\n"
 "                    :  provide a passphrase in a file; the AES key will be\n"
 "                       derived from this passphrase\n"
+"--locality [prepended][,reject-locality-4][,fallback]\n"
+"                    :  prepended: Expect a byte prepended to each command\n"
+"                       reject-locality-4: reject any command in locality 4\n"
+"                       fallback: no effect\n"
 "--migration-key file=<path>[,mode=aes-cbc][,format=hex|binary][,remove=[true|false]]\n"
 "                    :  use an AES key for the encryption of the TPM's state\n"
 "                       when it is retrieved from the TPM via ioctls;\n"
@@ -446,6 +455,19 @@ static void ptm_write_fatal_error_response(TPMLIB_TPMVersion l_tpmversion)
                                       &ptm_res_len,
                                       &ptm_res_tot,
                                       l_tpmversion);
+}
+
+/*
+ * ptm_write_locality_error_response: Write locality error response
+ *
+ * Write a locality error response into the global ptm_response buffer.
+ */
+static void ptm_write_locality_error_response(TPMLIB_TPMVersion tpmversion)
+{
+    tpmlib_write_locality_error_response(&ptm_response,
+                                         &ptm_res_len,
+                                         &ptm_res_tot,
+                                         tpmversion);
 }
 
 /************************************ read() support ***************************/
@@ -777,15 +799,29 @@ static void ptm_write_stateblob(fuse_req_t req, const char *buf, size_t size)
  * tpmversion: the version of the TPM
  */
 static void ptm_write_cmd(fuse_req_t req, const char *buf, size_t size,
-                          TPMLIB_TPMVersion l_tpmversion)
+                          TPMLIB_TPMVersion l_tpmversion,
+                          uint32_t locality_flags)
 {
     ptm_req_len = size;
     ptm_res_len = 0;
+    size_t cmd_offset = 0;
 
     /* prevent other threads from writing or doing ioctls */
     g_mutex_lock(FILE_OPS_LOCK);
 
     if (tpm_running) {
+        if (locality_flags & LOCALITY_FLAG_PREPENDED) {
+            locality = buf[0];
+            cmd_offset = 1;
+            ptm_req_len -= cmd_offset;
+        }
+        if (locality >= 5 ||
+            (locality == 4 &&
+             locality_flags & LOCALITY_FLAG_REJECT_LOCALITY_4)) {
+            ptm_write_locality_error_response(l_tpmversion);
+            goto skip_process;
+        }
+
         /* ensure that we only ever work on one TPM command */
         if (worker_thread_is_busy()) {
             fuse_reply_err(req, EBUSY);
@@ -796,8 +832,8 @@ static void ptm_write_cmd(fuse_req_t req, const char *buf, size_t size,
             ptm_req_len = TPM_REQ_MAX;
 
         if (tpmlib_is_request_cancelable(l_tpmversion,
-                                         (const unsigned char*)buf,
-                                         ptm_req_len)) {
+                                    (const unsigned char*)&buf[cmd_offset],
+                                    ptm_req_len)) {
             /* have command processed by thread pool */
             memcpy(ptm_request, buf, ptm_req_len);
 
@@ -809,14 +845,15 @@ static void ptm_write_cmd(fuse_req_t req, const char *buf, size_t size,
         } else {
             /* direct processing */
             TPMLIB_Process(&ptm_response, &ptm_res_len, &ptm_res_tot,
-                           (unsigned char *)buf, ptm_req_len);
+                           (unsigned char *)&buf[cmd_offset], ptm_req_len);
         }
     } else {
         /* TPM not initialized; return error */
         ptm_write_fatal_error_response(l_tpmversion);
     }
 
-    fuse_reply_write(req, ptm_req_len);
+skip_process:
+    fuse_reply_write(req, ptm_req_len + cmd_offset);
 
 cleanup:
     g_mutex_unlock(FILE_OPS_LOCK);
@@ -833,7 +870,7 @@ static void ptm_write(fuse_req_t req, const char *buf, size_t size,
 {
     switch (tx_state.state) {
     case TX_STATE_RW_COMMAND:
-        ptm_write_cmd(req, buf, size, tpmversion);
+        ptm_write_cmd(req, buf, size, tpmversion, locality_flags);
         break;
     case TX_STATE_GET_STATE_BLOB:
         fuse_reply_err(req, EIO);
@@ -1046,7 +1083,9 @@ static void ptm_ioctl(fuse_req_t req, int cmd, void *arg,
             fuse_reply_ioctl_retry(req, &iov, 1, NULL, 0);
         } else {
             ptm_loc *l = (ptm_loc *)in_buf;
-            if (l->u.req.loc > 4) {
+            if (l->u.req.loc > 4 ||
+                (l->u.req.loc == 4 &&
+                 locality_flags & LOCALITY_FLAG_REJECT_LOCALITY_4)) {
                 res = TPM_BAD_LOCALITY;
             } else {
                 res = TPM_SUCCESS;
@@ -1154,6 +1193,8 @@ static void ptm_ioctl(fuse_req_t req, int cmd, void *arg,
                 pgs.u.resp.flags |= PTM_CONFIG_FLAG_FILE_KEY;
             if (SWTPM_NVRAM_Has_MigrationKey())
                 pgs.u.resp.flags |= PTM_CONFIG_FLAG_MIGRATION_KEY;
+            if (locality_flags & LOCALITY_FLAG_PREPENDED)
+                pgs.u.resp.flags |= PTM_CONFIG_FLAG_LOCALITY_PREPENDED;
             fuse_reply_ioctl(req, 0, &pgs, sizeof(pgs));
         }
         break;
@@ -1223,6 +1264,7 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
         {"name"          , required_argument, 0, 'n'},
         {"runas"         , required_argument, 0, 'r'},
         {"log"           , required_argument, 0, 'l'},
+        {"locality"      , required_argument, 0, 'L'},
         {"key"           , required_argument, 0, 'k'},
         {"migration-key" , required_argument, 0, 'K'},
         {"pid"           , required_argument, 0, 'p'},
@@ -1317,6 +1359,9 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
         case '2':
             tpmversion = TPMLIB_TPM_VERSION_2;
             break;
+        case 'L':
+            param.localitydata = optarg;
+            break;
         case 'h': /* help */
             fprintf(stdout, usage, prgname, iface);
             return 0;
@@ -1341,7 +1386,8 @@ int swtpm_cuse_main(int argc, char **argv, const char *prgname, const char *ifac
         handle_key_options(param.keydata) < 0 ||
         handle_migration_key_options(param.migkeydata) < 0 ||
         handle_pid_options(param.piddata) < 0 ||
-        handle_tpmstate_options(param.tpmstatedata) < 0)
+        handle_tpmstate_options(param.tpmstatedata) < 0 ||
+        handle_locality_options(param.localitydata, &locality_flags) < 0)
         return -3;
 
     if (setuid(0)) {

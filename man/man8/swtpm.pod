@@ -198,6 +198,16 @@ level 5, libtpms debug logging is activated.
 
 All logged lines will be prefixed with prefix. By default no prefix is prepended.
 
+=item B<--locality [prepended][,reject-locality-4][,fallback]>
+
+Enable the handling of locality in which TPM commands are processed. The I<prepend>
+parameter implies that every TPM (1.2 or 2) command has a byte prepended that indicates
+the locality. The I<reject-locality-4> parameter will cause TPM error messages to be
+returned for any command executing in locality 4. The I<fallback> parameter works in
+conjunction with the I<--vtpm-proxy> option and the I<prepend> parameter and allows the
+swtpm to fallback to not using a preprended locality if the kernel driver does not support
+prepending locality.
+
 =item B<--key file=E<lt>keyfileE<gt>[,format=E<lt>hex|binaryE<gt>][,mode=aes-cbc],[remove[=true|false]]>
 
 Enable encryption of the state files of the TPM. The keyfile must contain

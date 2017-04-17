@@ -53,6 +53,10 @@ void tpmlib_write_fatal_error_response(unsigned char **rbuffer,
                                        uint32_t *rlength,
                                        uint32_t *rTotal,
                                        TPMLIB_TPMVersion tpmversion);
+void tpmlib_write_locality_error_response(unsigned char **rbuffer,
+                                          uint32_t *rlength,
+                                          uint32_t *rTotal,
+                                          TPMLIB_TPMVersion tpmversion);
 
 struct tpm_req_header {
     uint16_t tag;

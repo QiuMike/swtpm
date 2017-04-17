@@ -166,8 +166,9 @@ struct ptm_getconfig {
     } u;
 };
 
-#define PTM_CONFIG_FLAG_FILE_KEY        0x1
-#define PTM_CONFIG_FLAG_MIGRATION_KEY   0x2
+#define PTM_CONFIG_FLAG_FILE_KEY             (1<<0)
+#define PTM_CONFIG_FLAG_MIGRATION_KEY        (1<<1)
+#define PTM_CONFIG_FLAG_LOCALITY_PREPENDED   (1<<2)
 
 
 typedef uint64_t ptm_cap;

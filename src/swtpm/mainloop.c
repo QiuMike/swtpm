@@ -57,6 +57,7 @@
 #include "swtpm_debug.h"
 #include "swtpm_io.h"
 #include "tpmlib.h"
+#include "locality.h"
 #include "logging.h"
 #include "ctrlchannel.h"
 #include "mainloop.h"
@@ -93,6 +94,8 @@ int mainLoop(struct mainLoopParams *mlp,
     int                 ctrlclntfd;
     bool                readall;
     int                 sockfd;
+    bool                prepended_locality;
+    int                 cmd_offset = 0;
 
     /* poolfd[] indexes */
     enum {
@@ -105,7 +108,13 @@ int mainLoop(struct mainLoopParams *mlp,
 
     TPM_DEBUG("mainLoop:\n");
 
+    prepended_locality = (mlp->locality_flags & LOCALITY_FLAG_PREPENDED);
+    if (prepended_locality)
+        cmd_offset = sizeof(uint8_t);
+
     max_command_length = tpmlib_get_tpm_property(TPMPROP_TPM_BUFFER_MAX);
+    if (prepended_locality)
+        max_command_length += cmd_offset;
 
     rc = TPM_Malloc(&command, max_command_length);
     if (rc != TPM_SUCCESS) {
@@ -182,7 +191,8 @@ int mainLoop(struct mainLoopParams *mlp,
                 ctrlclntfd = ctrlchannel_process_fd(ctrlclntfd, callbacks,
                                                     &mainloop_terminate,
                                                     &locality, &tpm_running,
-                                                    mlp->tpmversion);
+                                                    mlp->tpmversion,
+                                                    mlp->locality_flags);
                 if (mainloop_terminate)
                     break;
             }
@@ -199,10 +209,25 @@ int mainLoop(struct mainLoopParams *mlp,
             /* Read the command.  The number of bytes is determined by 'paramSize' in the stream */
             if (rc == 0) {
                 rc = SWTPM_IO_Read(&connection_fd, command, &command_length,
-                                   max_command_length, mlp, readall);
+                                   max_command_length, mlp, readall,
+                                   prepended_locality);
                 if (rc != 0) {
                     /* connection broke */
                     SWTPM_IO_Disconnect(&connection_fd);
+                }
+
+                if (rc == 0 && prepended_locality) {
+                    locality = command[0];
+                    command_length -= cmd_offset;
+
+                    if (locality >=5 ||
+                        (locality == 4 &&
+                         mlp->locality_flags & LOCALITY_FLAG_REJECT_LOCALITY_4)) {
+                        tpmlib_write_locality_error_response(&rbuffer,
+                                    &rlength, &rTotal,
+                                    mlp->tpmversion);
+                        goto skip_process;
+                    }
                 }
             }
 
@@ -220,7 +245,7 @@ int mainLoop(struct mainLoopParams *mlp,
                 rc = TPMLIB_Process(&rbuffer,
                                     &rlength,
                                     &rTotal,
-                                    command,                /* complete command array */
+                                    &command[cmd_offset],   /* complete command array */
                                     command_length);        /* actual bytes in command */
             }
 

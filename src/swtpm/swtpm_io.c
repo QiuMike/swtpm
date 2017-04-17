@@ -113,16 +113,19 @@ TPM_RESULT SWTPM_IO_Read(TPM_CONNECTION_FD *connection_fd,   /* read/write file 
                          uint32_t *bufferLength,  /* output: command stream length */
                          size_t bufferSize,       /* input: max size of output buffer */
                          void *mainLoopArgs,
-                         bool readall)
+                         bool readall,
+                         bool prepended_locality)
 {
     TPM_RESULT          rc = 0;
     uint32_t            headerSize;     /* minimum required bytes in command through paramSize */
     uint32_t            paramSize;      /* from command stream */
     ssize_t             n;
+    size_t              localitySize = (prepended_locality
+                                        ? sizeof(uint8_t) : 0);
 
     /* check that the buffer can at least fit the command through the paramSize */
     if (rc == 0) {
-        headerSize = sizeof(TPM_TAG) + sizeof(uint32_t);
+        headerSize = localitySize + sizeof(TPM_TAG) + sizeof(uint32_t);
         if (bufferSize < headerSize) {
             TPM_DEBUG("SWTPM_IO_Read: Error, buffer size %lu less than minimum %u\n",
                    (unsigned long)bufferSize, headerSize);

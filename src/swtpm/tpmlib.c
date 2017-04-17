@@ -185,3 +185,16 @@ void tpmlib_write_fatal_error_response(unsigned char **rbuffer,
     tpmlib_write_error_response(rbuffer, rlength, rTotal, errcode,
                                 tpmversion);
 }
+
+void tpmlib_write_locality_error_response(unsigned char **rbuffer,
+                                          uint32_t *rlength,
+                                          uint32_t *rTotal,
+                                          TPMLIB_TPMVersion tpmversion)
+{
+    TPM_RESULT errcode = (tpmversion == TPMLIB_TPM_VERSION_2)
+                         ? TPM_RC_LOCALITY
+                         : TPM_BAD_LOCALITY;
+
+    tpmlib_write_error_response(rbuffer, rlength, rTotal, errcode,
+                                tpmversion);
+}

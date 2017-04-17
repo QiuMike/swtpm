@@ -53,7 +53,8 @@ TPM_RESULT SWTPM_IO_Read(TPM_CONNECTION_FD *connection_fd,
                          uint32_t *paramSize,
                          size_t buffer_size,
                          void *mainLoopArgs,
-                         bool readall);
+                         bool readall,
+                         bool prepended_locality);
 TPM_RESULT SWTPM_IO_Write(TPM_CONNECTION_FD *connection_fd,
                           const unsigned char *buffer,
                           size_t buffer_length);

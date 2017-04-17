@@ -24,6 +24,7 @@ TESTS += \
 	test_hashing2 \
 	test_init \
 	test_locality \
+	test_locality_prepended \
 	test_migration_key \
 	test_migration_key_2 \
 	test_resume_volatile \

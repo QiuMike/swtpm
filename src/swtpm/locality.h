@@ -1,7 +1,7 @@
 /*
- * mainloop.h -- The TPM Emulator's main processing loop
+ * locality.h -- locality parameters
  *
- * (c) Copyright IBM Corporation 2014, 2015, 2016
+ * (c) Copyright IBM Corporation 2017.
  *
  * Author: Stefan Berger <stefanb@us.ibm.com>
  *
@@ -35,36 +35,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* mainLoop() is the main server loop.
+#ifndef _SWTPM_LOCALITY_H_
+#define _SWTPM_LOCALITY_H_
 
-   It reads a TPM request, processes the ordinal, and writes the response
-*/
+#define LOCALITY_FLAG_PREPENDED           (1 << 0)
+#define LOCALITY_FLAG_FALLBACK            (1 << 1)
+#define LOCALITY_FLAG_REJECT_LOCALITY_4   (1 << 2)
 
-#ifndef _SWTPM_MAINLOOP_H_
-#define _SWPTM_MAINLOOP_H_
-
-#include <libtpms/tpm_library.h>
-
-extern bool mainloop_terminate;
-
-struct mainLoopParams {
-    uint32_t flags;
-#define MAIN_LOOP_FLAG_TERMINATE  (1 << 0)
-#define MAIN_LOOP_FLAG_USE_FD     (1 << 1)
-#define MAIN_LOOP_FLAG_KEEP_CONNECTION (1 << 2)
-#define MAIN_LOOP_FLAG_READALL    (1 << 3)
-#define MAIN_LOOP_FLAG_END_ON_HUP (1 << 4)
-
-    int fd;
-    struct ctrlchannel *cc;
-    TPMLIB_TPMVersion tpmversion;
-    uint32_t locality_flags;
-};
-
-int mainLoop(struct mainLoopParams *mlp,
-             int notify_fd,
-             struct libtpms_callbacks *callbacks);
-TPM_RESULT mainloop_cb_get_locality(TPM_MODIFIER_INDICATOR *loc,
-                                    uint32_t tpmnum);
-
-#endif /* _SWTPM_MAINLOOP_H_ */
+#endif /* _SWTPM_LOCALITY_H_ */

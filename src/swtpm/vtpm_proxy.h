@@ -48,6 +48,7 @@ struct vtpm_proxy_new_dev {
 };
 
 #define VTPM_PROXY_FLAG_TPM2   1
+#define VTPM_PROXY_FLAG_PREPEND_LOCALITY 2
 
 #define VTPM_PROXY_IOC_NEW_DEV _IOWR(0xa1, 0x00, struct vtpm_proxy_new_dev)
 

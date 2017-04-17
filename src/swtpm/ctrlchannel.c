@@ -55,6 +55,7 @@
 #include "tpm_ioctl.h"
 #include "tpmlib.h"
 #include "swtpm_nvfile.h"
+#include "locality.h"
 
 /* local variables */
 
@@ -232,6 +233,7 @@ err_fd_broken:
  * @tpm_running: indicates whether the TPM is running; may be changed by
  *               this function in case TPM is stopped or started
  * @tpmversion: the emulated TPM's version
+ * @locality_flags: flags indicate how to handle locality 4
  *
  * This function returns the passed file descriptor or -1 in case the
  * file descriptor was closed.
@@ -241,7 +243,8 @@ int ctrlchannel_process_fd(int fd,
                            bool *terminate,
                            TPM_MODIFIER_INDICATOR *locality,
                            bool *tpm_running,
-                           TPMLIB_TPMVersion tpmversion)
+                           TPMLIB_TPMVersion tpmversion,
+                           uint32_t locality_flags)
 {
     struct input {
         uint32_t cmd;
@@ -395,7 +398,9 @@ int ctrlchannel_process_fd(int fd,
             goto err_bad_input;
 
         pl = (ptm_loc *)input.body;
-        if (pl->u.req.loc > 4) {
+        if (pl->u.req.loc > 4 ||
+            (pl->u.req.loc == 4 &&
+             locality_flags & LOCALITY_FLAG_REJECT_LOCALITY_4)) {
             res = TPM_BAD_LOCALITY;
         } else {
             res = TPM_SUCCESS;
@@ -520,6 +525,8 @@ int ctrlchannel_process_fd(int fd,
             pgc->u.resp.flags |= PTM_CONFIG_FLAG_FILE_KEY;
         if (SWTPM_NVRAM_Has_MigrationKey())
             pgc->u.resp.flags |= PTM_CONFIG_FLAG_MIGRATION_KEY;
+        if (locality_flags & LOCALITY_FLAG_PREPENDED)
+            pgc->u.resp.flags |= PTM_CONFIG_FLAG_LOCALITY_PREPENDED;
 
         out_len = sizeof(pgc->u.resp);
         break;

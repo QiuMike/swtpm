@@ -338,6 +338,9 @@ encryption key is used (B<PTM_CONFIG_FLAG_FILE_KEY>)
 and whether a migration key is used
 (B<PTM_CONFIG_FLAG_MIGRATION_KEY>).
 
+The B<PTM_CONFIG_FLAG_LOCALITY_PREPENDED> flag indicates that every
+command must have a locality byte prepended to the TPM command.
+
 =back
 
 =head1 SEE ALSO
